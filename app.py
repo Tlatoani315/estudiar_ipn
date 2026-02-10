@@ -24,10 +24,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # Flask app
 flask_app = Flask(__name__)
 
-# Telegram Bot (Global)
+# Telegram Bot
 application = Application.builder().token(TOKEN).build()
 
-# ------------------ LÓGICA DE ESTUDIO (MEJORADA) ------------------
+# ------------------ FUNCIONES BD (LÓGICA) ------------------
 
 def get_info_tema(tema: str, tipo: str = "pendiente"):
     response = supabase.table("estudios").select("materia, tema, subtema").eq("tipo", tipo).eq("tema", tema).limit(1).execute()
@@ -40,7 +40,7 @@ def agregar_repaso_siguiente(repasar_row):
     """Calcula la próxima fecha basada en el número de repasos previos (Spaced Repetition)"""
     count = repasar_row.get("repasos_count", 0)
     if count >= 4:
-        return # Ya se graduó del sistema de repasos
+        return # Ya se graduó
     
     # Intervalos: 1er repaso (+1 día), 2do (+3), 3ro (+7), 4to (+30)
     dias = [3, 7, 30][min(count-1, 2)] 
@@ -56,19 +56,13 @@ def agregar_repaso_siguiente(repasar_row):
     }).execute()
 
 def marcar_estudiado_logica(tema_input: str):
-    """
-    Retorna (mensaje_status, objeto_info_tema)
-    objeto_info_tema es un dict con {materia, tema} para generar los textos finales.
-    """
     hoy = datetime.now().strftime('%Y-%m-%d')
     
     # 1. ¿Es un REPASO existente?
-    # Busamos si existe en 'repasar' con fecha <= hoy
     resp_repaso = supabase.table("estudios").select("*").eq("tipo", "repasar").eq("tema", tema_input).lte("fecha", hoy).execute()
     
     if resp_repaso.data:
         row = resp_repaso.data[0]
-        # Guardar historial
         supabase.table("estudios").insert({
             "tipo": "estudiado",
             "materia": row["materia"],
@@ -76,23 +70,14 @@ def marcar_estudiado_logica(tema_input: str):
             "subtema": row["subtema"],
             "fecha": hoy
         }).execute()
-        
-        # Borrar el pendiente de repaso
         supabase.table("estudios").delete().eq("id", row["id"]).execute()
-        
-        # Programar siguiente
         agregar_repaso_siguiente(row)
-        
         return "Repaso completado", {"materia": row["materia"], "tema": row["tema"]}
 
-    # 2. Es un TEMA NUEVO (Pendiente)
+    # 2. Es un TEMA NUEVO
     else:
         materia, tema_real, subtema = get_info_tema(tema_input, "pendiente")
-        
-        # Eliminar de pendientes
         supabase.table("estudios").delete().eq("tipo", "pendiente").eq("tema", tema_input).execute()
-        
-        # Marcar estudiado
         supabase.table("estudios").insert({
             "tipo": "estudiado",
             "materia": materia,
@@ -100,8 +85,6 @@ def marcar_estudiado_logica(tema_input: str):
             "subtema": subtema,
             "fecha": hoy
         }).execute()
-        
-        # Primer repaso (+1 día)
         repaso_fecha = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
         supabase.table("estudios").insert({
             "tipo": "repasar",
@@ -111,19 +94,128 @@ def marcar_estudiado_logica(tema_input: str):
             "fecha": repaso_fecha,
             "repasos_count": 1
         }).execute()
-        
         return "Nuevo tema estudiado", {"materia": materia, "tema": tema_real}
 
+def add_temas_simples(materia, lista_temas):
+    for t in lista_temas:
+        if t: supabase.table("estudios").insert({"tipo": "pendiente", "materia": materia, "tema": t}).execute()
+
+def add_subtemas(materia, tema, subtemas):
+    for sub in subtemas:
+        if sub: supabase.table("estudios").insert({"tipo": "pendiente", "materia": materia, "tema": tema, "subtema": sub}).execute()
+
+# --- Funciones de Lectura/Borrado ---
+
+def get_pendientes_por_materia():
+    response = supabase.table("estudios").select("materia, tema, subtema").eq("tipo", "pendiente").execute()
+    data = {}
+    for row in response.data:
+        mat = row["materia"] or "Sin materia"
+        tem = row["tema"] or "Sin tema"
+        sub = row["subtema"]
+        data.setdefault(mat, {}).setdefault(tem, []).append(sub)
+    return data
+
+def get_estudiados_por_materia():
+    response = supabase.table("estudios").select("materia, tema, subtema, fecha").eq("tipo", "estudiado").execute()
+    data = {}
+    for row in response.data:
+        mat = row["materia"] or "Sin materia"
+        tem = row["tema"] or "Sin tema"
+        sub = row["subtema"]
+        data.setdefault(mat, {}).setdefault(tem, []).append((sub, row["fecha"]))
+    return data
+
+def get_repasar_hoy():
+    hoy = datetime.now().strftime('%Y-%m-%d')
+    # lte = less than or equal (hoy o atrasados)
+    response = supabase.table("estudios").select("materia, tema, subtema").eq("tipo", "repasar").lte("fecha", hoy).execute()
+    data = {}
+    for row in response.data:
+        mat = row["materia"] or "Sin materia"
+        tem = row["tema"] or "Sin tema"
+        sub = row["subtema"]
+        data.setdefault(mat, {}).setdefault(tem, []).append(sub)
+    return data
+
+def get_calendario():
+    response = supabase.table("estudios").select("materia, tema, subtema, fecha").eq("tipo", "estudiado").execute()
+    cal = {}
+    for row in response.data:
+        fecha = row["fecha"]
+        texto = f"{row['materia']}: {row['tema']}"
+        if row["subtema"]: texto += f" → {row['subtema']}"
+        cal.setdefault(fecha, []).append(texto)
+    return cal
+
+def eliminar_tema(tema: str):
+    supabase.table("estudios").delete().eq("tema", tema).execute()
+
+def eliminar_materia(materia: str):
+    supabase.table("estudios").delete().eq("materia", materia).execute()
+
 # ------------------ HANDLERS ------------------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        '¡Hola! Soy tu bot de estudios.\n\n'
+        'Comandos:\n'
+        '/agregar_temas materia: NombreMateria\nTema1\nTema2 → Agregar temas a materia\n'
+        '/estudiar <tema> → Marcar como estudiado\n'
+        '/pendientes → Ver temas pendientes por materia\n'
+        '/estudiados → Ver estudiados por materia + pendientes al final\n'
+        '/repasar → Ver temas para repasar hoy por materia\n'
+        '/calendario → Ver historial de temas estudiados\n'
+        '/eliminar tema "Nombre Tema" → Eliminar un tema\n'
+        '/eliminar materia "Nombre Materia" → Eliminar una materia entera'
+    )
+
+async def agregar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text.strip()
+    lineas = [l.strip() for l in texto.split('\n')[1:] if l.strip()]
+    
+    if not lineas or not lineas[0].lower().startswith('materia:'):
+        await update.message.reply_text('⚠️ Falta la materia.\nUso:\n/agregar_temas\nmateria: Matemáticas\nTema 1\nTema 2')
+        return
+    
+    materia = lineas[0].split(':', 1)[1].strip()
+    tema_actual = None
+    subtemas = []
+    temas_simples = []
+    contador = 0
+    
+    for linea in lineas[1:]:
+        if linea.lower().startswith('tema:'):
+            if tema_actual and subtemas:
+                add_subtemas(materia, tema_actual, subtemas)
+                contador += len(subtemas)
+                subtemas = []
+            elif temas_simples:
+                add_temas_simples(materia, temas_simples)
+                contador += len(temas_simples)
+                temas_simples = []
+            tema_actual = linea.split(':', 1)[1].strip()
+        else:
+            if tema_actual: subtemas.append(linea)
+            else: temas_simples.append(linea)
+    
+    if tema_actual and subtemas:
+        add_subtemas(materia, tema_actual, subtemas)
+        contador += len(subtemas)
+    elif temas_simples:
+        add_temas_simples(materia, temas_simples)
+        contador += len(temas_simples)
+    
+    await update.message.reply_text(f'✅ Agregados {contador} elementos a "{materia}".')
 
 async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = ' '.join(context.args).strip()
     if not texto:
-        await update.message.reply_text('Uso: /estudiar tema1, tema2...')
+        await update.message.reply_text('Uso: /estudiar Tema1, Tema2...')
         return
     
     temas_raw = [t.strip() for t in texto.split(',') if t.strip()]
-    exitosos = [] # Lista de dicts {materia, tema}
+    exitosos = [] 
     mensajes = []
     
     for tema in temas_raw:
@@ -132,88 +224,145 @@ async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exitosos.append(info)
             mensajes.append(f'✅ "{tema}": {msg}')
         except Exception as e:
-            mensajes.append(f'❌ Error en "{tema}": {str(e)}')
-            print(f"Error estudiando {tema}: {e}")
-            traceback.print_exc()
+            mensajes.append(f'❌ Error en "{tema}": No encontrado o error interno.')
+            print(f"Error {tema}: {e}")
 
-    # Enviar reporte simple
     await update.message.reply_text("\n".join(mensajes))
     
-    # --- GENERAR LOS TEXTOS MAGICOS SOLICITADOS ---
     if exitosos:
-        # 1. Texto para Google Keep
-        # Agrupamos materias unicas
-        materias_unicas = sorted(list(set([x["materia"] for x in exitosos])))
+        materias_str = ", ".join(sorted(list(set([x["materia"] for x in exitosos]))))
         temas_lista = ", ".join([x["tema"] for x in exitosos])
-        materias_str = ", ".join(materias_unicas)
+        texto_keep = f"De las lisatas que tengo en keep agrega palomita de terminado en la lista [{materias_str}], los temas [{temas_lista}]"
         
-        texto_keep = (
-            f"De las lisatas que tengo en keep agrega palomita de terminado en la lista "
-            f"[{materias_str}], los temas [{temas_lista}]"
-        )
-        
-        # 2. Texto para Calendario
         eventos_lista = ", ".join([f'{x["materia"]}:{x["tema"]}' for x in exitosos])
-        texto_cal = (
-            f"Agrega en el calendario estos dos eventos que acaban de pasar hoy, "
-            f"es para tener un registro de lo que estudié hoy: [{eventos_lista}]"
-        )
+        texto_cal = f"Agrega en el calendario estos dos eventos que acaban de pasar hoy, es para tener un registro de lo que estudié hoy: [{eventos_lista}]"
         
-        # Enviar los textos en bloques de código para copiar fácil
         await update.message.reply_text(f"`{texto_keep}`", parse_mode='Markdown')
         await update.message.reply_text(f"`{texto_cal}`", parse_mode='Markdown')
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text('Bot de estudios activo 🤖. Usa /estudiar para avanzar.')
+async def pendientes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_pendientes_por_materia()
+    if not data:
+        await update.message.reply_text('No hay pendientes.')
+        return
+    
+    texto = '📚 Pendientes:\n'
+    for mat, temas_dict in sorted(data.items()):
+        texto += f'\n{mat}:\n'
+        for tem, subs in temas_dict.items():
+            texto += f'  • {tem}\n'
+            for sub in sorted(subs):
+                if sub: texto += f'     → {sub}\n'
+    await update.message.reply_text(texto.strip())
+
+async def estudiados(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    est = get_estudiados_por_materia()
+    pen = get_pendientes_por_materia()
+    
+    texto = '✅ Estudiados:\n'
+    if not est: texto += " (Nada aún)\n"
+    
+    for mat, temas_dict in sorted(est.items()):
+        texto += f'\n{mat}:\n'
+        for tem, items in temas_dict.items():
+            texto += f'  • {tem}\n'
+            for sub, fecha in items:
+                if sub: texto += f'     → {sub} ({fecha})\n'
+                else: texto += f'     (General) ({fecha})\n'
+
+    if pen:
+        texto += '\n📚 Pendientes (Resumen):\n'
+        for mat in sorted(pen.keys()):
+            texto += f'• {mat}: {len(pen[mat])} temas\n'
+    
+    await update.message.reply_text(texto.strip())
+
+async def repasar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = get_repasar_hoy()
+    if not data:
+        await update.message.reply_text('¡Nada para repasar hoy! 🎉')
+        return
+
+    texto = '🔄 Repasar HOY:\n'
+    for mat, temas_dict in sorted(data.items()):
+        texto += f'\n{mat}:\n'
+        for tem, subs in temas_dict.items():
+            texto += f'  • {tem}\n'
+            for sub in sorted(subs):
+                if sub: texto += f'     → {sub}\n'
+    await update.message.reply_text(texto.strip())
+
+async def calendario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    cal = get_calendario()
+    if not cal:
+        await update.message.reply_text('Calendario vacío.')
+        return
+    
+    texto = '📅 Historial:\n'
+    for fecha in sorted(cal.keys(), reverse=True):
+        texto += f"\n{fecha}:\n" + '\n'.join(f"• {t}" for t in sorted(cal[fecha])) + "\n"
+    await update.message.reply_text(texto.strip())
+
+async def eliminar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text('Uso: /eliminar tema "Nombre" o /eliminar materia "Nombre"')
+        return
+    
+    tipo = args[0].lower()
+    nombre = ' '.join(args[1:]).strip().strip('"')
+    
+    if tipo == 'tema':
+        eliminar_tema(nombre)
+        await update.message.reply_text(f'🗑️ Tema "{nombre}" eliminado.')
+    elif tipo == 'materia':
+        eliminar_materia(nombre)
+        await update.message.reply_text(f'🗑️ Materia "{nombre}" eliminada.')
+    else:
+        await update.message.reply_text('Usa "tema" o "materia".')
 
 async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    pass # Ignorar mensajes sin comando
+    pass 
 
-# Registrar handlers
-application.add_handler(CommandHandler("estudiar", estudiar))
+# Registro de comandos
 application.add_handler(CommandHandler("start", start))
-# ... Agrega aquí tus otros handlers (pendientes, calendario, etc) si los tienes ...
+application.add_handler(CommandHandler("agregar_temas", agregar_temas))
+application.add_handler(CommandHandler("estudiar", estudiar))
+application.add_handler(CommandHandler("pendientes", pendientes))
+application.add_handler(CommandHandler("estudiados", estudiados))
+application.add_handler(CommandHandler("repasar", repasar))
+application.add_handler(CommandHandler("calendario", calendario))
+application.add_handler(CommandHandler("eliminar", eliminar))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
 
-# ------------------ WEBHOOK ROBUSTO (SOLUCIÓN ERROR 500) ------------------
+# ------------------ WEBHOOK ROBUSTO ------------------
 
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
-    """
-    Maneja el webhook de forma segura evitando reinicializaciones concurrentes
-    que causan el error 500 en Render.
-    """
     if request.method == 'POST':
         try:
             update_data = request.get_json(force=True)
-            if not update_data:
-                return 'No data', 400
+            if not update_data: return 'No data', 400
             
             update = Update.de_json(update_data, application.bot)
             
             async def process_safe():
-                # Inicialización "Lazy": Solo si no está listo.
-                # Evitamos 'async with' porque cierra la app al terminar.
                 if not application._initialized:
                     await application.initialize()
                     await application.start()
-                
                 await application.process_update(update)
-                # No hacemos stop() ni shutdown() para mantenerlo vivo en memoria
             
-            # Ejecutar en un nuevo loop aislado para evitar conflictos de hilos de Flask
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
                 loop.run_until_complete(process_safe())
             finally:
                 loop.close()
-                
             return 'OK', 200
         except Exception as e:
-            print(f"🔥 ERROR CRÍTICO WEBHOOK: {e}")
             traceback.print_exc()
-            return 'Internal Server Error', 500
-            
+            return 'Error', 500
+
 @flask_app.route('/webhook', methods=['GET'])
 def webhook_health():
     return 'Bot is alive 🚀'
@@ -221,5 +370,5 @@ def webhook_health():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     from waitress import serve
-    print(f"Servidor arrancando en puerto {port}...")
+    print(f"Iniciando en puerto {port}...")
     serve(flask_app, host='0.0.0.0', port=port)
