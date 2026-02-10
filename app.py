@@ -74,33 +74,65 @@ def get_info_tema(tema: str, tipo: str = "pendiente"):
         return r["materia"] or "General", r["tema"], r["subtema"]
     return "General", tema, None
 
-def marcar_estudiado(tema: str):
+def marcar_estudiado(tema_input: str):
     hoy = datetime.now().strftime('%Y-%m-%d')
     
-    materia, tema_real, subtema = get_info_tema(tema, "pendiente")
+    # 1. Buscar si es un REPASO pendiente para hoy (o atrasado)
+    resp_repaso = supabase.table("estudios").select("*").eq("tipo", "repasar").eq("tema", tema_input).execute()
     
-    # Eliminar pendiente
-    supabase.table("estudios").delete().eq("tipo", "pendiente").eq("tema", tema).execute()
-    
-    # Marcar como estudiado
-    supabase.table("estudios").insert({
-        "tipo": "estudiado",
-        "materia": materia,
-        "tema": tema_real,
-        "subtema": subtema,
-        "fecha": hoy
-    }).execute()
-    
-    # Agregar primer repaso +1 día y count = 1
-    repaso_fecha = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
-    supabase.table("estudios").insert({
-        "tipo": "repasar",
-        "materia": materia,
-        "tema": tema_real,
-        "subtema": subtema,
-        "fecha": repaso_fecha,
-        "repasos_count": 1
-    }).execute()
+    if resp_repaso.data:
+        # ES UN REPASO: Actualizamos al siguiente nivel
+        row = resp_repaso.data[0]
+        
+        # Guardar historial de que se estudió hoy
+        supabase.table("estudios").insert({
+            "tipo": "estudiado",
+            "materia": row["materia"],
+            "tema": row["tema"],
+            "subtema": row["subtema"],
+            "fecha": hoy
+        }).execute()
+        
+        # Borrar el aviso de repaso viejo
+        supabase.table("estudios").delete().eq("id", row["id"]).execute() # Asumiendo que Supabase tiene col 'id', si no usa eq match de todo
+        
+        # Calcular y agendar el SIGUIENTE repaso (Aquí llamamos a tu función olvidada)
+        agregar_repaso_siguiente(row)
+        return f"Repaso completado. Siguiente nivel programado."
+
+    # 2. Si no es repaso, buscamos si es PENDIENTE
+    else:
+        materia, tema_real, subtema = get_info_tema(tema_input, "pendiente")
+        
+        # Si devuelve "General" y el tema input es distinto, es que no existe
+        if materia == "General" and tema_real == tema_input:
+             # Opcional: Podrías decidir no guardarlo si no existe en pendientes
+             pass
+
+        # Eliminar de pendientes
+        supabase.table("estudios").delete().eq("tipo", "pendiente").eq("tema", tema_input).execute()
+        
+        # Marcar estudiado
+        supabase.table("estudios").insert({
+            "tipo": "estudiado",
+            "materia": materia,
+            "tema": tema_real,
+            "subtema": subtema,
+            "fecha": hoy
+        }).execute()
+        
+        # Primer repaso (Nivel 1)
+        repaso_fecha = (datetime.now() + timedelta(days=1)).strftime('%Y-%m-%d')
+        supabase.table("estudios").insert({
+            "tipo": "repasar",
+            "materia": materia,
+            "tema": tema_real,
+            "subtema": subtema,
+            "fecha": repaso_fecha,
+            "repasos_count": 1
+        }).execute()
+        
+        return "Tema nuevo estudiado. Primer repaso mañana."
 
 def agregar_repaso_siguiente(repasar_row):
     count = repasar_row["repasos_count"]
