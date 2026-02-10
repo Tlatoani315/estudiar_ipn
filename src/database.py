@@ -1,72 +1,80 @@
+# src/database.py
 from supabase import create_client, Client
 from typing import List, Dict, Any, Optional
+import random
 from .config import settings
 
 class DatabaseManager:
-    """
-    Manejador de la conexión con Supabase.
-    Patrón Singleton implícito al instanciarse a nivel de módulo si se desea,
-    o inyección de dependencias.
-    """
-    
     def __init__(self):
         self.client: Client = create_client(settings.SUPABASE_URL, settings.SUPABASE_KEY)
         self.table = self.client.table("estudios")
 
+    # --- Verificaciones ---
     def existe_subtema(self, materia: str, tema: str, subtema: str) -> bool:
-        """Verifica si la combinación Materia-Tema-Subtema existe."""
-        res = self.table.select("id") \
-            .eq("materia", materia) \
-            .eq("tema", tema) \
-            .eq("subtema", subtema) \
-            .execute()
+        res = self.table.select("id").eq("materia", materia).eq("tema", tema).eq("subtema", subtema).execute()
         return len(res.data) > 0
 
+    # --- Inserción / Actualización ---
     def insertar_registro(self, data: Dict[str, Any]) -> None:
-        """Inserta un registro genérico en la tabla."""
         self.table.insert(data).execute()
 
+    def marcar_como_dominado(self, subtema: str) -> bool:
+        """Cambia el estado de un subtema a 'dominado' y borra rastro de repasos pendientes."""
+        # 1. Buscar si existe en repasos o pendientes
+        res = self.table.select("*").eq("subtema", subtema).neq("tipo", "estudiado").execute()
+        
+        if not res.data:
+            # Quizás ya está dominado o no existe
+            return False
+
+        # Eliminamos registros viejos (pendientes o repasos activos)
+        for row in res.data:
+            self.table.delete().eq("id", row['id']).execute()
+
+        # Insertamos como dominado (usamos fecha hoy como referencia)
+        from datetime import datetime
+        hoy = datetime.now().strftime('%Y-%m-%d')
+        self.insertar_registro({
+            "tipo": "dominado",
+            "materia": res.data[0]['materia'],
+            "tema": res.data[0]['tema'],
+            "subtema": subtema,
+            "fecha": hoy
+        })
+        return True
+
     def eliminar_por_id(self, registro_id: int) -> None:
-        """Elimina un registro por su ID único."""
         self.table.delete().eq("id", registro_id).execute()
 
     def eliminar_por_campo(self, campo: str, valor: str) -> None:
-        """Elimina registros donde campo == valor (ej. eliminar materia)."""
         self.table.delete().eq(campo, valor).execute()
 
+    # --- Consultas de Estudio ---
+    def obtener_pendientes_materia(self, materia: str) -> List[Dict[str, Any]]:
+        """Obtiene pendientes de una materia específica."""
+        return self.table.select("*").eq("tipo", "pendiente").eq("materia", materia).execute().data
+
     def obtener_pendientes(self) -> List[Dict[str, Any]]:
-        """Obtiene todos los registros marcados como 'pendiente'."""
         return self.table.select("*").eq("tipo", "pendiente").execute().data
 
     def obtener_repasos_para_fecha(self, fecha_limite: str) -> List[Dict[str, Any]]:
-        """Obtiene repasos programados para hoy o antes (atrasados)."""
-        return self.table.select("*") \
-            .eq("tipo", "repasar") \
-            .lte("fecha", fecha_limite) \
-            .execute().data
+        # Busca repasos programados para hoy o antes (atrasados) que NO estén dominados
+        return self.table.select("*").eq("tipo", "repasar").lte("fecha", fecha_limite).execute().data
 
-    def buscar_repaso_especifico(self, subtema: str, fecha_limite: str) -> Optional[Dict[str, Any]]:
-        """Busca un repaso específico disponible para hoy."""
-        res = self.table.select("*") \
-            .eq("tipo", "repasar") \
-            .eq("subtema", subtema) \
-            .lte("fecha", fecha_limite) \
-            .execute()
+    def buscar_repaso_especifico(self, subtema: str) -> Optional[Dict[str, Any]]:
+        # Busca en 'repasar' sin importar fecha, para marcarlo estudiado si el usuario quiere adelantarse
+        res = self.table.select("*").eq("tipo", "repasar").eq("subtema", subtema).execute()
         return res.data[0] if res.data else None
 
     def buscar_pendiente_especifico(self, subtema: str) -> Optional[Dict[str, Any]]:
-        """Busca un subtema específico en pendientes."""
-        res = self.table.select("*") \
-            .eq("tipo", "pendiente") \
-            .eq("subtema", subtema) \
-            .execute()
+        res = self.table.select("*").eq("tipo", "pendiente").eq("subtema", subtema).execute()
         return res.data[0] if res.data else None
 
-    def obtener_historial(self) -> List[Dict[str, Any]]:
-        """Obtiene todo el historial de lo estudiado."""
-        return self.table.select("materia, tema, subtema, fecha") \
-            .eq("tipo", "estudiado") \
-            .execute().data
+    # --- Métricas y Consultas Masivas ---
+    def obtener_todos_registros(self) -> List[Dict[str, Any]]:
+        """Trae todo para calcular métricas en memoria (más eficiente que mil selects si la DB es pequeña < 10k rows)"""
+        # Nota: Supabase tiene límite de filas por request (usualmente 1000). 
+        # Si tienes muchos datos, deberás paginar. Para uso personal, esto sirve.
+        return self.table.select("materia, tema, subtema, tipo").execute().data
 
-# Instancia para ser importada
 db = DatabaseManager()
