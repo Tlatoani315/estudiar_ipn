@@ -244,12 +244,19 @@ def webhook():
                 return 'No update data', 400
             
             update = Update.de_json(update_data, application.bot)
+            
             if update:
-                # Crear un nuevo loop para procesar async de forma segura
+                # FUNCIÓN ASÍNCRONA INTERNA PARA MANEJAR EL CICLO DE VIDA
+                async def process_update_async():
+                    # Esto inicializa el bot, procesa y cierra correctamente
+                    async with application: 
+                        await application.process_update(update)
+
+                # Ejecutar el loop
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
-                    loop.run_until_complete(application.process_update(update))
+                    loop.run_until_complete(process_update_async())
                 finally:
                     loop.close()
             
