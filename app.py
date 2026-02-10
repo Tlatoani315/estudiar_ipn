@@ -262,8 +262,10 @@ def webhook():
     
     abort(400)
 # ------------------ Inicio ------------------
+# Al final del archivo, reemplaza el bloque if __name__ == '__main__':
+
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 8080))
+    port = int(os.environ.get("PORT", 10000))  # Render usa PORT, default 10000
     from waitress import serve
     print(f"Iniciando servidor en puerto {port}...")
     serve(flask_app, host='0.0.0.0', port=port)
