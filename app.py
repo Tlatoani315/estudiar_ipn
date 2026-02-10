@@ -232,10 +232,10 @@ async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if exitosos:
         materias_str = ", ".join(sorted(list(set([x["materia"] for x in exitosos]))))
         temas_lista = ", ".join([x["tema"] for x in exitosos])
-        texto_keep = f"De las lisatas que tengo en keep agrega palomita de terminado en la lista [{materias_str}], los temas [{temas_lista}]"
+        texto_keep = f"De las listas que tengo en keep agrega palomita de terminado en la lista [{materias_str}], los temas [{temas_lista}]"
         
         eventos_lista = ", ".join([f'{x["materia"]}:{x["tema"]}' for x in exitosos])
-        texto_cal = f"Agrega en el calendario estos dos eventos que acaban de pasar hoy, es para tener un registro de lo que estudié hoy: [{eventos_lista}]"
+        texto_cal = f"Agrega en el calendario estos eventos que acaban de pasar hoy, es para tener un registro de lo que estudié hoy: [{eventos_lista}]"
         
         await update.message.reply_text(f"`{texto_keep}`", parse_mode='Markdown')
         await update.message.reply_text(f"`{texto_cal}`", parse_mode='Markdown')
