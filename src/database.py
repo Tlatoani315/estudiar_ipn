@@ -77,4 +77,18 @@ class DatabaseManager:
         # Si tienes muchos datos, deberás paginar. Para uso personal, esto sirve.
         return self.table.select("materia, tema, subtema, tipo").execute().data
 
+    def obtener_materias_unicas(self) -> List[str]:
+        """Devuelve una lista ordenada de todas las materias existentes."""
+        # Traemos todo y filtramos en Python (eficiente para <10k registros)
+        res = self.table.select("materia").execute()
+        if not res.data:
+            return []
+        # Usamos set para eliminar duplicados
+        return sorted(list(set(r['materia'] for r in res.data)))
+
+    def obtener_detalle_materia(self, materia: str) -> List[Dict[str, Any]]:
+        """Obtiene todos los registros activos de una materia para armar el temario."""
+        # Excluimos el historial 'estudiado' para ver solo el estado actual (p, d, repasar)
+        return self.table.select("*").eq("materia", materia).neq("tipo", "estudiado").execute().data
+
 db = DatabaseManager()

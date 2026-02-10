@@ -290,6 +290,75 @@ async def metricas_materia(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(msg, parse_mode='Markdown')
 
+# Agrega estas funciones al final de src/handlers.py (antes de unknown)
+
+async def listar_materias(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra todas las materias registradas."""
+    materias = db.obtener_materias_unicas()
+    
+    if not materias:
+        await update.message.reply_text("📭 No hay materias registradas aún.")
+        return
+
+    msg = "📚 **Materias Disponibles:**\n\n"
+    for m in materias:
+        msg += f"🔹 `{m}`\n"
+    
+    msg += "\nUsa `/temario <NombreMateria>` para ver sus temas."
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+async def listar_temario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Muestra temas y subtemas con su estado (p, e, d)."""
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Uso: `/temario <Nombre de la Materia>`", parse_mode='Markdown')
+        return
+
+    materia = " ".join(args).strip()
+    registros = db.obtener_detalle_materia(materia)
+
+    if not registros:
+        await update.message.reply_text(f"⚠️ No encontré información para la materia **{materia}**.", parse_mode='Markdown')
+        return
+
+    # Estructura de datos: Tema -> [(Subtema, Estado)]
+    estructura = {}
+    
+    for r in registros:
+        tema = r['tema']
+        sub = r['subtema']
+        tipo = r['tipo']
+        
+        # Mapeo de estados a tus siglas
+        sigla = "(?)"
+        if tipo == 'pendiente': sigla = "(p)"
+        elif tipo == 'repasar': sigla = "(e)" # Estudiado/En repaso
+        elif tipo == 'dominado': sigla = "(d)"
+        
+        if tema not in estructura:
+            estructura[tema] = []
+        estructura[tema].append((sub, sigla))
+
+    # Construir mensaje
+    msg = f"📂 **Temario: {materia}**\n\n"
+    msg += "Leyenda: (p)endiente, (e)studiado, (d)ominado\n"
+    
+    for tema in sorted(estructura.keys()):
+        msg += f"\n📌 **{tema}**\n"
+        # Ordenamos subtemas alfabéticamente
+        for sub, sigla in sorted(estructura[tema]):
+            # Ponemos negrita si está dominado para destacar
+            if sigla == "(d)":
+                msg += f"   ▪️ **{sub} {sigla}**\n"
+            else:
+                msg += f"   ▫️ {sub} {sigla}\n"
+
+    # Cortar mensaje si es muy largo (Telegram límite 4096 caracteres)
+    if len(msg) > 4000:
+        await update.message.reply_text(msg[:4000] + "\n... (cortado por longitud)", parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤔 No entendí ese comando.\n"
