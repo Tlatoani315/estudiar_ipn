@@ -1,4 +1,3 @@
-# src/handlers.py
 from telegram import Update
 from telegram.ext import ContextTypes
 from .database import db
@@ -7,23 +6,23 @@ from datetime import datetime
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        '🤖 **Bot de Estudios 2.0**\n\n'
+        '🤖 **Bot de Estudios 2.0 (Completo)**\n\n'
         '**Comandos:**\n'
         '`/agregar_temas` (Materia/Tema/Subtema)\n'
-        '`/estudiar_temas <Materia> <Num>` (Dame N temas nuevos)\n'
-        '`/estudiar <Subtema>` (Registrar estudio hoy)\n'
-        '`/dominado <Subtema>` (¡Ya me lo sé!)\n'
-        '`/repasar` (Lo que toca hoy)\n'
-        '`/temasFaltantes` (Métricas globales)\n'
+        '`/estudiar_temas <Materia> <Num>` (Sugerir temas)\n'
+        '`/estudiar <Subtema1, Subtema2>` (Registrar hoy)\n'
+        '`/dominado <Subtema1, Subtema2>` (Marcar terminados)\n'
+        '`/repasar` (Ver pendientes de hoy)\n'
+        '`/temasFaltantes` (Resumen global)\n'
         '`/materias_metricas` (Detalle por materia)\n'
+        '`/materias` (Lista de materias)\n'
+        '`/temario <Materia>` (Ver detalle temas)\n'
         '`/eliminar subtema "Nombre"`',
         parse_mode='Markdown'
     )
 
 async def agregar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Nuevo formato: Materia/Tema/Subtema"""
     texto = update.message.text.strip()
-    # Ignoramos la primera línea si es el comando
     lineas = [l.strip() for l in texto.split('\n') if '/' in l]
     
     agregados = 0
@@ -36,10 +35,9 @@ async def agregar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
             errores += 1
             continue
         
-        # Asumimos Materia/Tema/Subtema (pueden haber mas slashes, unimos el resto)
         mat = partes[0].strip()
         tem = partes[1].strip()
-        sub = "/".join(partes[2:]).strip() # Por si el subtema tiene slashes
+        sub = "/".join(partes[2:]).strip() 
         
         if not db.existe_subtema(mat, tem, sub):
             db.insertar_registro({
@@ -53,19 +51,16 @@ async def agregar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ignorados += 1
 
     await update.message.reply_text(
-        f"📥 **Procesado:**\n✅ Agregados: {agregados}\n⏭ Ignorados (repetidos): {ignorados}\n⚠️ Errores formato: {errores}\n\n"
-        "Recuerda el formato:\n`Materia/Tema/Subtema`",
+        f"📥 **Procesado:**\n✅ Agregados: {agregados}\n⏭ Repetidos: {ignorados}\n⚠️ Errores formato: {errores}",
         parse_mode='Markdown'
     )
 
 async def estudiar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Elige N temas al azar de una materia."""
     args = context.args
     if len(args) < 2:
-        await update.message.reply_text("❌ Uso: `/estudiar_temas <NombreMateria> <Cantidad>`", parse_mode='Markdown')
+        await update.message.reply_text("❌ Uso: `/estudiar_temas <Materia> <Cantidad>`", parse_mode='Markdown')
         return
 
-    # Manejar nombres de materia con espacios. El último arg es la cantidad.
     cantidad_str = args[-1]
     materia = " ".join(args[:-1])
 
@@ -73,18 +68,16 @@ async def estudiar_temas(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ La cantidad debe ser un número.")
         return
     
-    cantidad = int(cantidad_str)
-    sugerencias = SpacedRepetitionService.sugerir_nuevos_temas(materia, cantidad)
+    sugerencias = SpacedRepetitionService.sugerir_nuevos_temas(materia, int(cantidad_str))
 
     if not sugerencias:
         await update.message.reply_text(f"🎉 No hay temas pendientes en **{materia}**.", parse_mode='Markdown')
         return
 
-    msg = f"🎲 **Temas sugeridos para {materia}:**\n"
+    msg = f"🎲 **{len(sugerencias)} temas sugeridos para {materia}:**\n"
     for item in sugerencias:
         msg += f"👉 `{item['materia']} -> {item['tema']} -> {item['subtema']}`\n"
     
-    msg += "\nCopia y pega en `/estudiar` cuando termines."
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def repasar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -92,23 +85,19 @@ async def repasar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     repasos = db.obtener_repasos_para_fecha(hoy)
     
     if not repasos:
-        await update.message.reply_text("✅ ¡Estás al día! No hay repasos pendientes para hoy.")
+        await update.message.reply_text("✅ ¡Estás al día! No hay repasos para hoy.")
         return
 
-    # Agrupar
     data = {}
     for r in repasos:
         data.setdefault(r["materia"], []).append(r["subtema"])
 
-    msg = "🔄 **Temas para Repasar HOY:**\n"
-    count_total = 0
+    msg = "🔄 **Repasar HOY:**\n"
     for mat, subs in data.items():
         msg += f"\n📌 **{mat}**\n"
         for s in subs:
             msg += f"   ▫️ {s}\n"
-            count_total += 1
             
-    msg += f"\nTotal: {count_total} subtemas."
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -121,7 +110,7 @@ async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exitosos = []
     msgs = []
 
-    await update.message.reply_text("⏳ Procesando estudios...")
+    await update.message.reply_text("⏳ Procesando...")
 
     for sub in subtemas:
         try:
@@ -129,171 +118,98 @@ async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             exitosos.append(row)
             msgs.append(f"✅ {sub}: {msg_res}")
         except ValueError:
-            msgs.append(f"⚠️ {sub}: No encontrado (¿Check ortografía?)")
+            msgs.append(f"⚠️ {sub}: No encontrado en pendientes/repaso.")
         except Exception as e:
-            msgs.append(f"❌ {sub}: Error {e}")
+            msgs.append(f"❌ {sub}: Error interno.")
 
     await update.message.reply_text("\n".join(msgs))
 
     if exitosos:
         materias = sorted(list(set([x["materia"] for x in exitosos])))
         subtemas_str = ", ".join([x["subtema"] for x in exitosos])
+        eventos = ", ".join([f'{x["materia"]}: {x["tema"]} -> {x["subtema"]}' for x in exitosos])
         
-        # PROMPTS
-        p_keep = f"`De las listas que tengo en keep agrega palomita de terminado en la lista [{', '.join(materias)}], los temas [{subtemas_str}]`"
-        
-        eventos_cal = ", ".join([f'{x["materia"]}: {x["tema"]} -> {x["subtema"]}' for x in exitosos])
-        p_cal = f"`Agrega en el calendario estos eventos que acaban de pasar hoy, es para tener un registro de lo que estudié hoy: [{eventos_cal}]`"
-        
-        p_anki = "De estos apuntes: Genera 10-15 tarjetas Anki en formato CSV..."
-
-        await update.message.reply_text(p_keep, parse_mode='Markdown')
-        await update.message.reply_text(p_cal, parse_mode='Markdown')
-        await update.message.reply_text(p_anki)
+        await update.message.reply_text(f"`De las listas que tengo en keep agrega palomita de terminado en la lista [{', '.join(materias)}], los temas [{subtemas_str}]`", parse_mode='Markdown')
+        await update.message.reply_text(f"`Agrega en el calendario estos eventos que acaban de pasar hoy: [{eventos}]`", parse_mode='Markdown')
+        await update.message.reply_text("De estos apuntes: Genera 10-15 tarjetas Anki...")
 
 async def dominado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = ' '.join(context.args).strip()
     if not texto:
-        await update.message.reply_text('❌ Uso: `/dominado Tema1, Tema2...`', parse_mode='Markdown')
+        await update.message.reply_text('❌ Uso: `/dominado Subtema1, Subtema2`', parse_mode='Markdown')
         return
 
-    # AHORA SOPORTA MÚLTIPLES SEPARADOS POR COMA
     subtemas = [t.strip() for t in texto.split(',') if t.strip()]
     msgs = []
 
     for sub in subtemas:
         if db.marcar_como_dominado(sub):
-            msgs.append(f"🏆 **{sub}**: ¡Dominado! (Archivado)")
+            msgs.append(f"🏆 **{sub}**: ¡Dominado! (Eliminado de repasos)")
         else:
             msgs.append(f"⚠️ **{sub}**: No encontrado o ya estaba dominado.")
 
     await update.message.reply_text("\n".join(msgs), parse_mode='Markdown')
 
-    
 async def metricas_globales(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /temasFaltantes
-    faltantes X/Total - estudiados Y/Total - dominados Z/Total
-    """
     regs = db.obtener_todos_registros()
     if not regs:
         await update.message.reply_text("📭 Base de datos vacía.")
         return
 
-    # Usamos un Set para contar Subtemas ÚNICOS, ya que 'estudiado' crea duplicados en historial
-    # Pero para el estado actual, filtramos por 'tipo'.
-    # Ojo: 'estudiado' es historial. 'pendiente', 'repasar', 'dominado' son estados actuales únicos por subtema.
-    
-    # 1. Identificar universo de subtemas únicos
-    # Mapa: (Materia, Tema, Subtema) -> Estado Actual
-    # Prioridad de estado: Dominado > Repasar > Pendiente > (Si solo está en Estudiado es raro, asumimos Repasar perdido o error)
-    
-    # Simpler approach: Count current status rows
-    pendientes = 0
-    repasar = 0
-    dominados = 0
-    
-    # Para saber el total REAL, necesitamos agrupar por subtema único
-    subtemas_unicos = set()
-    
-    for r in regs:
-        key = f"{r['materia']}|{r['subtema']}"
-        subtemas_unicos.add(key)
-        
-        t = r['tipo']
-        if t == 'pendiente': pendientes += 1
-        elif t == 'repasar': repasar += 1
-        elif t == 'dominado': dominados += 1
-        # 'estudiado' es log, no suma al estado actual
-    
-    # Total de subtemas en el sistema (activos)
-    # Nota: Un subtema puede tener log 'estudiado' y estar en 'repasar'.
-    # El conteo exacto se basa en los registros de estado (pendiente, repasar, dominado).
+    pendientes = sum(1 for r in regs if r['tipo'] == 'pendiente')
+    repasar = sum(1 for r in regs if r['tipo'] == 'repasar')
+    dominados = sum(1 for r in regs if r['tipo'] == 'dominado')
     total_activos = pendientes + repasar + dominados
     
-    # "Estudiados" según tu fórmula: (repasar + dominados) ? O solo logs?
-    # Tu ejemplo: "estudiados 13/144". Asumiré que es (Total - Pendientes) = Progreso.
-    progreso = total_activos - pendientes
-    
     msg = (
-        f"📊 **Estado Global**\n"
-        f"Total Subtemas: {total_activos}\n\n"
-        f"🔴 Faltantes: {pendientes}/{total_activos} ({(pendientes/total_activos)*100:.1f}%)\n"
-        f"🟡 En Progreso (Repaso): {repasar}/{total_activos}\n"
-        f"🟢 Dominados: {dominados}/{total_activos}\n\n"
-        f"🏁 **Avance Total:** {progreso}/{total_activos}"
+        f"📊 **Métricas Globales**\n"
+        f"🔴 Faltantes: {pendientes}/{total_activos}\n"
+        f"🟡 En Progreso: {repasar}/{total_activos}\n"
+        f"🟢 Dominados: {dominados}/{total_activos}\n"
     )
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def metricas_materia(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    /materias_metricas
-    Formato: materia 33/133 (subtemas vistos/total) 12/24 (temas vistos/total)
-    """
     regs = db.obtener_todos_registros()
     if not regs: return
 
-    # Estructura: Materia -> { TemasSet, SubtemasTotal, SubtemasVistos }
     stats = {}
-
     for r in regs:
         mat = r['materia']
-        tem = r['tema']
-        sub = r['subtema']
-        tipo = r['tipo']
+        if r['tipo'] != 'estudiado': 
+            if mat not in stats: stats[mat] = {'total': 0, 'vistos': 0}
+            stats[mat]['total'] += 1
+            if r['tipo'] in ['repasar', 'dominado']:
+                stats[mat]['vistos'] += 1
 
-        if mat not in stats:
-            stats[mat] = {
-                'temas_total': set(),
-                'temas_con_pendientes': set(), 
-                'subtemas_total_set': set(),
-                'subtemas_vistos_set': set() # No pendientes
-            }
-        
-        # Ignorar logs históricos para el conteo de estructura, usar estados actuales si es posible
-        # Pero como 'estudiado' es solo log, nos basamos en:
-        # Si existe registro 'pendiente' -> No visto.
-        # Si existe registro 'repasar' o 'dominado' -> Visto.
-        
-        if tipo != 'estudiado':
-            stats[mat]['temas_total'].add(tem)
-            stats[mat]['subtemas_total_set'].add(sub)
-            
-            if tipo == 'pendiente':
-                stats[mat]['temas_con_pendientes'].add(tem)
-            else:
-                stats[mat]['subtemas_vistos_set'].add(sub)
-
-    msg = "📈 **Métricas por Materia**\n\n"
-    
-    for mat, data in stats.items():
-        total_sub = len(data['subtemas_total_set'])
-        # Vistos son Total - Pendientes (Calculado mejor iterando status)
-        # Hacemos una corrección rápida: iteramos los registros de nuevo para contar pendientes exactos por materia
-        # (Esto se puede optimizar, pero funciona).
-        
-        pendientes_count = 0
-        temas_pendientes = set()
-        for r in regs:
-            if r['materia'] == mat and r['tipo'] == 'pendiente':
-                pendientes_count += 1
-                temas_pendientes.add(r['tema'])
-        
-        vistos_sub = total_sub - pendientes_count
-        
-        total_temas = len(data['temas_total'])
-        temas_vistos = total_temas - len(temas_pendientes)
-        
-        msg += f"**{mat}**\n"
-        msg += f"   Subtemas: {vistos_sub}/{total_sub}\n"
-        msg += f"   Temas: {temas_vistos}/{total_temas}\n\n"
+    msg = "📈 **Avance por Materia**\n\n"
+    for mat, s in stats.items():
+        msg += f"**{mat}**: {s['vistos']}/{s['total']} temas\n"
 
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-# Agrega estas funciones al final de src/handlers.py (antes de unknown)
+async def eliminar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Función que faltaba y causaba el error.
+    """
+    args = context.args
+    if len(args) < 2:
+        await update.message.reply_text('Uso: /eliminar subtema "Nombre" (o materia)')
+        return
+    
+    tipo = args[0].lower()
+    nombre = ' '.join(args[1:]).strip().strip('"')
+    
+    if tipo == 'subtema':
+        db.eliminar_por_campo("subtema", nombre)
+        await update.message.reply_text(f'🗑️ Subtema "{nombre}" eliminado.')
+    elif tipo == 'materia':
+        db.eliminar_por_campo("materia", nombre)
+        await update.message.reply_text(f'🗑️ Materia "{nombre}" eliminada.')
+    else:
+         await update.message.reply_text('⚠️ Tipo desconocido. Usa "subtema" o "materia".')
 
 async def listar_materias(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra todas las materias registradas."""
     materias = db.obtener_materias_unicas()
     
     if not materias:
@@ -308,7 +224,6 @@ async def listar_materias(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def listar_temario(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Muestra temas y subtemas con su estado (p, e, d)."""
     args = context.args
     if not args:
         await update.message.reply_text("❌ Uso: `/temario <Nombre de la Materia>`", parse_mode='Markdown')
@@ -321,7 +236,6 @@ async def listar_temario(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"⚠️ No encontré información para la materia **{materia}**.", parse_mode='Markdown')
         return
 
-    # Estructura de datos: Tema -> [(Subtema, Estado)]
     estructura = {}
     
     for r in registros:
@@ -329,39 +243,30 @@ async def listar_temario(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sub = r['subtema']
         tipo = r['tipo']
         
-        # Mapeo de estados a tus siglas
         sigla = "(?)"
         if tipo == 'pendiente': sigla = "(p)"
-        elif tipo == 'repasar': sigla = "(e)" # Estudiado/En repaso
+        elif tipo == 'repasar': sigla = "(e)" 
         elif tipo == 'dominado': sigla = "(d)"
         
         if tema not in estructura:
             estructura[tema] = []
         estructura[tema].append((sub, sigla))
 
-    # Construir mensaje
     msg = f"📂 **Temario: {materia}**\n\n"
     msg += "Leyenda: (p)endiente, (e)studiado, (d)ominado\n"
     
     for tema in sorted(estructura.keys()):
         msg += f"\n📌 **{tema}**\n"
-        # Ordenamos subtemas alfabéticamente
         for sub, sigla in sorted(estructura[tema]):
-            # Ponemos negrita si está dominado para destacar
             if sigla == "(d)":
                 msg += f"   ▪️ **{sub} {sigla}**\n"
             else:
                 msg += f"   ▫️ {sub} {sigla}\n"
 
-    # Cortar mensaje si es muy largo (Telegram límite 4096 caracteres)
     if len(msg) > 4000:
-        await update.message.reply_text(msg[:4000] + "\n... (cortado por longitud)", parse_mode='Markdown')
+        await update.message.reply_text(msg[:4000] + "\n... (cortado)", parse_mode='Markdown')
     else:
         await update.message.reply_text(msg, parse_mode='Markdown')
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🤔 No entendí ese comando.\n"
-        "Escribiste algo que no es una instrucción válida o el bot no la escuchó bien.\n"
-        "Prueba `/start` para ver la lista."
-    )
+    await update.message.reply_text("🤔 No entendí. Usa /start para ver los comandos.")
