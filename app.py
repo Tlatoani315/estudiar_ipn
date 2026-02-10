@@ -4,6 +4,7 @@ from flask import Flask, request, abort
 from supabase import create_client, Client
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+import asyncio  # <- Agrega este import al inicio del archivo
 
 # Carga variables de entorno
 from dotenv import load_dotenv
@@ -238,16 +239,17 @@ def webhook():
     
     if request.method == 'POST':
         try:
-            update = Update.de_json(request.get_json(force=True), application.bot)
-            if update:
-                application.process_update(update)
+            update_data = request.get_json(force=True)
+            if update_data:
+                update = Update.de_json(update_data, application.bot)
+                # Ejecuta la coroutine de forma síncrona
+                asyncio.run(application.process_update(update))
             return 'OK', 200
         except Exception as e:
-            print(f"Error en webhook: {e}")
-            return 'Error', 500
+            print(f"Error procesando update: {e}")
+            return 'Error interno', 500
     
     abort(400)
-
 # ------------------ Inicio ------------------
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
