@@ -240,14 +240,25 @@ def webhook():
     if request.method == 'POST':
         try:
             update_data = request.get_json(force=True)
-            if update_data:
-                update = Update.de_json(update_data, application.bot)
-                # Ejecuta la coroutine de forma síncrona
-                asyncio.run(application.process_update(update))
+            if not update_data:
+                return 'No update data', 400
+            
+            update = Update.de_json(update_data, application.bot)
+            if update:
+                # Crear un nuevo loop para procesar async de forma segura
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    loop.run_until_complete(application.process_update(update))
+                finally:
+                    loop.close()
+            
             return 'OK', 200
         except Exception as e:
-            print(f"Error procesando update: {e}")
-            return 'Error interno', 500
+            print(f"ERROR EN WEBHOOK: {type(e).__name__}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return f'Internal error: {str(e)}', 500
     
     abort(400)
 # ------------------ Inicio ------------------
