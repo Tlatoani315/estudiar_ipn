@@ -104,7 +104,7 @@ async def repasar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     await update.message.reply_text(msg, parse_mode='Markdown')
 
-a# Mejora en el comando estudiar para asegurar los prompts
+# Mejora en el comando estudiar para asegurar los prompts
 async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = ' '.join(context.args).strip()
     if not texto:
