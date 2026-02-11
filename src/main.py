@@ -19,15 +19,11 @@ logger = logging.getLogger(__name__)
 
 flask_app = Flask(__name__)
 
-# --- FACTORY DE LA APLICACIÓN ---
 def build_application():
-    """
-    Construye una instancia nueva de la Application para cada petición.
-    Es crucial para evitar el error 'Event loop is closed'.
-    """
+    """Construye una instancia nueva de la App para cada petición."""
     app = Application.builder().token(settings.TELEGRAM_TOKEN).build()
 
-    # Registramos los comandos AQUÍ para cada nueva instancia
+    # Registro de Handlers
     app.add_handler(CommandHandler("start", handlers.start))
     app.add_handler(CommandHandler("agregar_temas", handlers.agregar_temas))
     app.add_handler(CommandHandler("estudiar_temas", handlers.estudiar_temas))
@@ -40,43 +36,35 @@ def build_application():
     app.add_handler(CommandHandler("materias", handlers.listar_materias))
     app.add_handler(CommandHandler("temario", handlers.listar_temario))
     
-    # Handler por defecto (si no entiende el comando)
+    # Handler por defecto
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.unknown))
     
     return app
 
 async def process_update_async(update_data):
-    """
-    Gestiona el ciclo de vida completo del bot para una sola actualización.
-    """
+    """Procesa el update en un contexto asíncrono aislado."""
     bot_app = build_application()
     
-    # 'async with' inicializa y cierra la aplicación correctamente en ESTE loop.
+    # 'async with' gestiona el inicio y cierre correcto de la conexión
     async with bot_app:
-        # Importante: Decodificar el JSON usando el bot de esta instancia específica
         update = Update.de_json(update_data, bot_app.bot)
         await bot_app.process_update(update)
 
 @flask_app.route('/webhook', methods=['POST'])
 def webhook():
-    """
-    Punto de entrada síncrono para Flask/Waitress.
-    """
     if request.method == 'POST':
         try:
             update_data = request.get_json(force=True)
-            if not update_data: 
-                return 'No data', 400
+            if not update_data: return 'No data', 400
             
-            # Ejecutamos el bot en un entorno asíncrono aislado y seguro
+            # Ejecución segura del bot
             asyncio.run(process_update_async(update_data))
                 
             return 'OK', 200
         except Exception as e:
-            logger.error(f"Error procesando update: {e}")
+            logger.error(f"Error crítico en webhook: {e}")
             traceback.print_exc()
-            # Retornamos 200 para evitar que Telegram reintente infinitamente en caso de bug
-            return 'Error interno procesado', 200
+            return 'Error procesado', 200
 
 @flask_app.route('/health', methods=['GET'])
 def health_check():
