@@ -6,18 +6,22 @@ from datetime import datetime
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        '🤖 **Bot de Estudios 2.0 (Completo)**\n\n'
-        '**Comandos:**\n'
-        '`/agregar_temas` (Materia/Tema/Subtema)\n'
-        '`/estudiar_temas <Materia> <Num>` (Sugerir temas)\n'
-        '`/estudiar <Subtema1, Subtema2>` (Registrar hoy)\n'
-        '`/dominado <Subtema1, Subtema2>` (Marcar terminados)\n'
-        '`/repasar` (Ver pendientes de hoy)\n'
-        '`/temasFaltantes` (Resumen global)\n'
-        '`/materias_metricas` (Detalle por materia)\n'
-        '`/materias` (Lista de materias)\n'
-        '`/temario <Materia>` (Ver detalle temas)\n'
-        '`/eliminar subtema "Nombre"`',
+        '🤖 **Bot de Estudios 2.0 (Optimizado)**\n\n'
+        '**Comandos de Acción:**\n'
+        '• `/agregar_temas` (Materia/Tema/Subtema)\n'
+        '• `/estudiar <Subtema1, ...>` (Registra y genera prompts para Keep/Anki)\n'
+        '• `/repasar` (Ver qué temas tocan hoy)\n'
+        '• `/ver_calendario` (Historial de lo estudiado y próximos repasos)\n'
+        '• `/dominado <Subtema>` (Marcar como aprendido para siempre)\n\n'
+        '**Consultas y Progreso:**\n'
+        '• `/materias` (Ver tus materias registradas)\n'
+        '• `/temario <Materia>` (Lista detallada de temas)\n'
+        '• `/temasFaltantes` (Resumen global de avance)\n'
+        '• `/materias_metricas` (Estadísticas por materia)\n'
+        '• `/estudiar_temas <Mat> <Num>` (Sugerencias aleatorias)\n\n'
+        '**Gestión:**\n'
+        '• `/eliminar subtema "Nombre"`\n'
+        '• `/eliminar materia "Nombre"`',
         parse_mode='Markdown'
     )
 
@@ -100,6 +104,7 @@ async def repasar(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
     await update.message.reply_text(msg, parse_mode='Markdown')
 
+a# Mejora en el comando estudiar para asegurar los prompts
 async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = ' '.join(context.args).strip()
     if not texto:
@@ -110,28 +115,38 @@ async def estudiar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     exitosos = []
     msgs = []
 
-    await update.message.reply_text("⏳ Procesando...")
+    msg_espera = await update.message.reply_text("⏳ Procesando tus temas...")
 
     for sub in subtemas:
         try:
+            # Ahora la búsqueda es insensible a mayúsculas gracias al cambio en database.py
             msg_res, row = SpacedRepetitionService.procesar_estudio(sub)
             exitosos.append(row)
             msgs.append(f"✅ {sub}: {msg_res}")
         except ValueError:
-            msgs.append(f"⚠️ {sub}: No encontrado en pendientes/repaso.")
-        except Exception as e:
-            msgs.append(f"❌ {sub}: Error interno.")
+            msgs.append(f"⚠️ {sub}: No encontrado. Revisa si es un SUBTEMA exacto.")
+        except Exception:
+            msgs.append(f"❌ {sub}: Error en la base de datos.")
 
     await update.message.reply_text("\n".join(msgs))
 
+    # SOLUCIÓN A LOS PROMPTS:
+    # Solo se envían si hubo al menos un tema procesado correctamente
     if exitosos:
         materias = sorted(list(set([x["materia"] for x in exitosos])))
         subtemas_str = ", ".join([x["subtema"] for x in exitosos])
         eventos = ", ".join([f'{x["materia"]}: {x["tema"]} -> {x["subtema"]}' for x in exitosos])
         
-        await update.message.reply_text(f"`De las listas que tengo en keep agrega palomita de terminado en la lista [{', '.join(materias)}], los temas [{subtemas_str}]`", parse_mode='Markdown')
-        await update.message.reply_text(f"`Agrega en el calendario estos eventos que acaban de pasar hoy: [{eventos}]`", parse_mode='Markdown')
-        await update.message.reply_text("De estos apuntes: Genera 10-15 tarjetas Anki...")
+        # Enviamos cada prompt en mensajes separados para que sean fáciles de copiar
+        await update.message.reply_text(f"📝 **Prompt para Google Keep:**\n`De las listas que tengo en keep agrega palomita de terminado en la lista [{', '.join(materias)}], los temas [{subtemas_str}]`", parse_mode='Markdown')
+        
+        await update.message.reply_text(f"🗓 **Prompt para Calendario:**\n`Agrega en el calendario estos eventos que acaban de pasar hoy: [{eventos}]`", parse_mode='Markdown')
+        
+        await update.message.reply_text(f"🧠 **Prompt para Anki:**\n`De estos apuntes de {', '.join(materias)}: Genera 10-15 tarjetas Anki en formato CSV (Frente;Reverso). Frente: Pregunta/concepto corto. Reverso: Respuesta detallada con ejemplos IPN.`", parse_mode='Markdown')
+    else:
+        await update.message.reply_text("ℹ️ No se generaron prompts porque no se encontró ningún subtema válido en tus pendientes o repasos de hoy.")
+
+    await msg_espera.delete()
 
 async def dominado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = ' '.join(context.args).strip()
@@ -267,6 +282,35 @@ async def listar_temario(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg[:4000] + "\n... (cortado)", parse_mode='Markdown')
     else:
         await update.message.reply_text(msg, parse_mode='Markdown')
+    
+# src/handlers.py
+
+async def ver_calendario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    registros = db.obtener_cronograma_completo()
+    if not registros:
+        await update.message.reply_text("📅 El calendario está vacío.")
+        return
+
+    # Agrupamos por fecha para mostrarlo ordenado
+    cronograma = {}
+    for r in registros:
+        fecha = r["fecha"] or "Sin fecha"
+        cronograma.setdefault(fecha, []).append(r)
+
+    msg = "📅 **Calendario de Estudio y Repaso**\n"
+    for fecha in sorted(cronograma.keys()):
+        msg += f"\n🗓 `{fecha}`\n"
+        for item in cronograma[fecha]:
+            # Icono distinto si es algo ya hecho o por hacer
+            icono = "✅" if item["tipo"] == "estudiado" else "🔄"
+            msg += f" {icono} {item['materia']}: {item['subtema']}\n"
+    
+    if len(msg) > 4000: # Por si el mensaje es muy largo para Telegram
+        for i in range(0, len(msg), 4000):
+            await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
+    else:
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
 
 async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🤔 No entendí. Usa /start para ver los comandos.")

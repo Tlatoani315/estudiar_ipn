@@ -35,7 +35,7 @@ def build_application():
     app.add_handler(CommandHandler("eliminar", handlers.eliminar))
     app.add_handler(CommandHandler("materias", handlers.listar_materias))
     app.add_handler(CommandHandler("temario", handlers.listar_temario))
-    
+    app.add_handler(CommandHandler("ver_calendario", handlers.ver_calendario))
     # Handler por defecto
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handlers.unknown))
     

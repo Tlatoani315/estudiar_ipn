@@ -81,7 +81,22 @@ class DatabaseManager:
         return sorted(list(set(r['materia'] for r in res.data)))
 
     def obtener_detalle_materia(self, materia: str) -> List[Dict[str, Any]]:
-        return self._get_table().select("*").eq("materia", materia).neq("tipo", "estudiado").execute().data
+        return self._get_table().select("*").eq("materia", materia).execute().dat
+
+    def buscar_repaso_especifico(self, subtema: str) -> Optional[Dict[str, Any]]:
+        # Usamos ilike para que no importe si escribes "sistemas" o "Sistemas"
+        res = self._get_table().select("*").eq("tipo", "repasar").ilike("subtema", subtema).execute()
+        return res.data[0] if res.data else None
+
+    def buscar_pendiente_especifico(self, subtema: str) -> Optional[Dict[str, Any]]:
+        res = self._get_table().select("*").eq("tipo", "pendiente").ilike("subtema", subtema).execute()
+        return res.data[0] if res.data else None
+
+    def obtener_cronograma_completo(self) -> List[Dict[str, Any]]:
+        """Obtiene tanto lo estudiado (pasado) como lo programado (futuro)"""
+        # Traemos registros de tipo estudiado y repasar
+        res = self._get_table().select("*").in_("tipo", ["estudiado", "repasar"]).order("fecha").execute()
+        return res.data
 
 # Instancia global (ahora segura porque es "stateless")
 db = DatabaseManager()
